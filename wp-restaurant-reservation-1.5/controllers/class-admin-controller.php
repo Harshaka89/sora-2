@@ -1,6 +1,20 @@
 <?php
 if (!defined('ABSPATH')) exit;
 
+// Prevent duplicate class declaration
+if (class_exists('YRR_Admin_Controller')) {
+    return;
+}
+
+class YRR_Admin_Controller {
+    // Your existing class content
+}
+
+
+
+
+if (!defined('ABSPATH')) exit;
+
 class YRR_Admin_Controller {
     private $reservation_model;
     private $settings_model;

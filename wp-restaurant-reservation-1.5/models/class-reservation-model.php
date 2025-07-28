@@ -1,7 +1,15 @@
 <?php
-/**
- * Reservation Model - Fixed for Manual Reservations v1.5.1
- */
+if (!defined('ABSPATH')) exit;
+
+// Prevent duplicate class declaration
+if (class_exists('YRR_Reservation_Model')) {
+    return;
+}
+
+class YRR_Reservation_Model {
+    // Your existing class content
+}
+
 
 if (!defined('ABSPATH')) exit;
 
