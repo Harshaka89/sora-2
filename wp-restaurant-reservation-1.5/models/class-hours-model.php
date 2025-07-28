@@ -1,13 +1,11 @@
 <?php
-/**
- * Operating Hours Model - Yenolx Restaurant Reservation v1.5
- */
-
 if (!defined('ABSPATH')) exit;
 
+if (!class_exists('YRR_Hours_Model')) {
+
 class YRR_Hours_Model {
-    private $table_name;
     private $wpdb;
+    private $table_name;
     
     public function __construct() {
         global $wpdb;
@@ -15,78 +13,142 @@ class YRR_Hours_Model {
         $this->table_name = $wpdb->prefix . 'yrr_operating_hours';
     }
     
-    public function get_hours_for_day($day) {
-        return $this->wpdb->get_results($this->wpdb->prepare(
-            "SELECT * FROM {$this->table_name} WHERE day_of_week = %s ORDER BY shift_name",
-            $day
-        ));
-    }
-    
+    /**
+     * ✅ Hours Integration - Get all operating hours
+     */
     public function get_all_hours() {
-        $results = $this->wpdb->get_results("SELECT * FROM {$this->table_name} ORDER BY FIELD(day_of_week, 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'), shift_name");
+        $results = $this->wpdb->get_results(
+            "SELECT * FROM {$this->table_name} ORDER BY 
+             FIELD(day_of_week, 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')"
+        );
         
         $hours = array();
-        foreach ($results as $row) {
-            $hours[$row->day_of_week][$row->shift_name] = $row;
+        $days = array('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday');
+        
+        foreach ($days as $day) {
+            $found = false;
+            foreach ($results as $result) {
+                if ($result->day_of_week === $day) {
+                    $hours[$day] = $result;
+                    $found = true;
+                    break;
+                }
+            }
+            
+            if (!$found) {
+                $hours[$day] = (object) array(
+                    'day_of_week' => $day,
+                    'open_time' => '10:00:00',
+                    'close_time' => '22:00:00',
+                    'is_closed' => 0,
+                    'break_start' => null,
+                    'break_end' => null
+                );
+            }
         }
         
         return $hours;
     }
     
-    public function set_hours($day, $shift, $open_time, $close_time, $is_closed = false) {
+    public function set_hours($day, $open_time, $close_time, $is_closed = 0, $break_start = null, $break_end = null) {
         $data = array(
             'day_of_week' => $day,
-            'shift_name' => $shift,
-            'open_time' => $is_closed ? null : $open_time,
-            'close_time' => $is_closed ? null : $close_time,
-            'is_closed' => $is_closed ? 1 : 0
+            'open_time' => $open_time,
+            'close_time' => $close_time,
+            'is_closed' => intval($is_closed),
+            'break_start' => $break_start,
+            'break_end' => $break_end,
+            'updated_at' => current_time('mysql')
         );
         
-        return $this->wpdb->replace($this->table_name, $data);
-    }
-    
-    public function is_open_at($date, $time) {
-        $day_of_week = strtolower(date('l', strtotime($date)));
-        
-        $hours = $this->wpdb->get_results($this->wpdb->prepare(
-            "SELECT * FROM {$this->table_name} 
-             WHERE day_of_week = %s AND is_closed = 0
-             AND open_time <= %s AND close_time >= %s",
-            $day_of_week, $time, $time
+        $existing = $this->wpdb->get_var($this->wpdb->prepare(
+            "SELECT id FROM {$this->table_name} WHERE day_of_week = %s",
+            $day
         ));
         
-        return !empty($hours);
+        if ($existing) {
+            $result = $this->wpdb->update(
+                $this->table_name,
+                $data,
+                array('day_of_week' => $day)
+            );
+            return $result !== false;
+        } else {
+            $data['created_at'] = current_time('mysql');
+            $result = $this->wpdb->insert($this->table_name, $data);
+            return $result !== false;
+        }
     }
     
-    public function get_available_time_slots($date, $slot_duration = 30) {
-        $day_of_week = strtolower(date('l', strtotime($date)));
-        
-        $hours = $this->wpdb->get_results($this->wpdb->prepare(
-            "SELECT * FROM {$this->table_name} 
-             WHERE day_of_week = %s AND is_closed = 0
-             ORDER BY open_time",
-            $day_of_week
+    /**
+     * ✅ Hours Integration - Get today's hours for settings integration
+     */
+    public function get_today_hours() {
+        $today = strtolower(date('l'));
+        return $this->get_day_hours($today);
+    }
+    
+    public function get_day_hours($day) {
+        return $this->wpdb->get_row($this->wpdb->prepare(
+            "SELECT * FROM {$this->table_name} WHERE day_of_week = %s",
+            $day
         ));
+    }
+    
+    /**
+     * Check if restaurant is open at specific day/time
+     */
+    public function is_open($day, $time) {
+        $hours = $this->get_day_hours($day);
         
-        $slots = array();
-        foreach ($hours as $shift) {
-            if (!$shift->open_time || !$shift->close_time) continue;
-            
-            $current_time = strtotime($shift->open_time);
-            $end_time = strtotime($shift->close_time);
-            
-            while ($current_time < $end_time) {
-                $slot_time = date('H:i:s', $current_time);
-                $slots[] = array(
-                    'time' => $slot_time,
-                    'display' => date('g:i A', $current_time),
-                    'shift' => $shift->shift_name
-                );
-                $current_time += ($slot_duration * 60);
+        if (!$hours || $hours->is_closed) {
+            return false;
+        }
+        
+        $current_time = strtotime($time);
+        $open_time = strtotime($hours->open_time);
+        $close_time = strtotime($hours->close_time);
+        
+        if ($close_time <= $open_time) {
+            $close_time += 24 * 3600;
+            if ($current_time < $open_time) {
+                $current_time += 24 * 3600;
             }
         }
         
-        return $slots;
+        return $current_time >= $open_time && $current_time <= $close_time;
     }
+    
+    /**
+     * Get hours statistics for dashboard
+     */
+    public function get_hours_statistics() {
+        $hours = $this->get_all_hours();
+        $total_open_days = 0;
+        $total_hours_per_week = 0;
+        
+        foreach ($hours as $day_hours) {
+            if (!$day_hours->is_closed) {
+                $total_open_days++;
+                $open_time = strtotime($day_hours->open_time);
+                $close_time = strtotime($day_hours->close_time);
+                
+                if ($close_time <= $open_time) {
+                    $close_time += 24 * 3600;
+                }
+                
+                $day_hours_count = ($close_time - $open_time) / 3600;
+                $total_hours_per_week += $day_hours_count;
+            }
+        }
+        
+        return array(
+            'open_days' => $total_open_days,
+            'total_hours' => round($total_hours_per_week, 1),
+            'avg_hours_per_day' => $total_open_days > 0 ? round($total_hours_per_week / $total_open_days, 1) : 0
+        );
+    }
+}
+
 }
 ?>

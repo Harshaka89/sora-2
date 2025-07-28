@@ -169,6 +169,56 @@ class YRR_Reservation_Model {
         }
     }
     
+
+/**
+ * Get total count for pagination
+ */
+public function get_total_count($filters = array()) {
+    $where_clause = $this->build_where_clause($filters);
+    
+    return $this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name} {$where_clause}");
+}
+
+/**
+ * Get paginated reservations
+ */
+public function get_paginated($per_page = 20, $offset = 0, $filters = array()) {
+    $where_clause = $this->build_where_clause($filters);
+    
+    return $this->wpdb->get_results($this->wpdb->prepare(
+        "SELECT * FROM {$this->table_name} {$where_clause} 
+         ORDER BY reservation_date DESC, reservation_time DESC 
+         LIMIT %d OFFSET %d",
+        $per_page, $offset
+    ));
+}
+
+private function build_where_clause($filters = array()) {
+    global $wpdb;
+    
+    $conditions = array();
+    
+    if (!empty($filters['status'])) {
+        $conditions[] = $wpdb->prepare("status = %s", $filters['status']);
+    }
+    
+    if (!empty($filters['date_from'])) {
+        $conditions[] = $wpdb->prepare("reservation_date >= %s", $filters['date_from']);
+    }
+    
+    if (!empty($filters['date_to'])) {
+        $conditions[] = $wpdb->prepare("reservation_date <= %s", $filters['date_to']);
+    }
+    
+    if (!empty($filters['search'])) {
+        $search = '%' . $wpdb->esc_like($filters['search']) . '%';
+        $conditions[] = $wpdb->prepare("(customer_name LIKE %s OR customer_email LIKE %s)", $search, $search);
+    }
+    
+    return !empty($conditions) ? 'WHERE ' . implode(' AND ', $conditions) : '';
+}
+
+
     private function generate_reservation_code() {
         $prefix = 'YRR';
         $date = date('Ymd');
