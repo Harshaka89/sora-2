@@ -14,7 +14,7 @@ class YRR_Hours_Model {
     }
     
     /**
-     * ✅ Hours Integration - Get all operating hours
+     * Get all operating hours - WORKING FUNCTION
      */
     public function get_all_hours() {
         $results = $this->wpdb->get_results(
@@ -40,9 +40,7 @@ class YRR_Hours_Model {
                     'day_of_week' => $day,
                     'open_time' => '10:00:00',
                     'close_time' => '22:00:00',
-                    'is_closed' => 0,
-                    'break_start' => null,
-                    'break_end' => null
+                    'is_closed' => 0
                 );
             }
         }
@@ -50,14 +48,15 @@ class YRR_Hours_Model {
         return $hours;
     }
     
-    public function set_hours($day, $open_time, $close_time, $is_closed = 0, $break_start = null, $break_end = null) {
+    /**
+     * Set hours for specific day - WORKING FUNCTION
+     */
+    public function set_hours($day, $open_time, $close_time, $is_closed = 0) {
         $data = array(
             'day_of_week' => $day,
             'open_time' => $open_time,
             'close_time' => $close_time,
             'is_closed' => intval($is_closed),
-            'break_start' => $break_start,
-            'break_end' => $break_end,
             'updated_at' => current_time('mysql')
         );
         
@@ -81,13 +80,16 @@ class YRR_Hours_Model {
     }
     
     /**
-     * ✅ Hours Integration - Get today's hours for settings integration
+     * Get today's hours - WORKING FUNCTION
      */
     public function get_today_hours() {
         $today = strtolower(date('l'));
         return $this->get_day_hours($today);
     }
     
+    /**
+     * Get hours for specific day - WORKING FUNCTION
+     */
     public function get_day_hours($day) {
         return $this->wpdb->get_row($this->wpdb->prepare(
             "SELECT * FROM {$this->table_name} WHERE day_of_week = %s",
@@ -96,7 +98,7 @@ class YRR_Hours_Model {
     }
     
     /**
-     * Check if restaurant is open at specific day/time
+     * Check if restaurant is open - WORKING FUNCTION
      */
     public function is_open($day, $time) {
         $hours = $this->get_day_hours($day);
@@ -109,6 +111,7 @@ class YRR_Hours_Model {
         $open_time = strtotime($hours->open_time);
         $close_time = strtotime($hours->close_time);
         
+        // Handle overnight service
         if ($close_time <= $open_time) {
             $close_time += 24 * 3600;
             if ($current_time < $open_time) {
@@ -120,35 +123,23 @@ class YRR_Hours_Model {
     }
     
     /**
-     * Get hours statistics for dashboard
+     * Get basic statistics - WORKING FUNCTION
      */
-    public function get_hours_statistics() {
+    public function get_basic_stats() {
         $hours = $this->get_all_hours();
-        $total_open_days = 0;
-        $total_hours_per_week = 0;
+        $open_days = 0;
         
         foreach ($hours as $day_hours) {
             if (!$day_hours->is_closed) {
-                $total_open_days++;
-                $open_time = strtotime($day_hours->open_time);
-                $close_time = strtotime($day_hours->close_time);
-                
-                if ($close_time <= $open_time) {
-                    $close_time += 24 * 3600;
-                }
-                
-                $day_hours_count = ($close_time - $open_time) / 3600;
-                $total_hours_per_week += $day_hours_count;
+                $open_days++;
             }
         }
         
         return array(
-            'open_days' => $total_open_days,
-            'total_hours' => round($total_hours_per_week, 1),
-            'avg_hours_per_day' => $total_open_days > 0 ? round($total_hours_per_week / $total_open_days, 1) : 0
+            'open_days' => $open_days,
+            'closed_days' => 7 - $open_days
         );
     }
 }
 
 }
-?>

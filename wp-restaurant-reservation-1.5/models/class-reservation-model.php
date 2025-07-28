@@ -1,13 +1,11 @@
 <?php
-/**
- * Reservation Model - Fixed for Manual Reservations v1.5.1
- */
-
 if (!defined('ABSPATH')) exit;
 
+if (!class_exists('YRR_Reservation_Model')) {
+
 class YRR_Reservation_Model {
-    private $table_name;
     private $wpdb;
+    private $table_name;
     
     public function __construct() {
         global $wpdb;
@@ -15,55 +13,122 @@ class YRR_Reservation_Model {
         $this->table_name = $wpdb->prefix . 'yrr_reservations';
     }
     
-    public function create($data) {
-        // Ensure required fields have defaults
-        $defaults = array(
-            'reservation_code' => $this->generate_reservation_code(),
-            'customer_name' => '',
-            'customer_email' => '',
-            'customer_phone' => '',
-            'party_size' => 1,
-            'reservation_date' => date('Y-m-d'),
-            'reservation_time' => '19:00:00',
-            'special_requests' => '',
-            'status' => 'pending',
-            'table_id' => null,
-            'coupon_code' => null,
-            'original_price' => 0.00,
-            'discount_amount' => 0.00,
-            'final_price' => 0.00,
-            'price_breakdown' => null,
-            'notes' => '',
-            'created_at' => current_time('mysql'),
-            'updated_at' => current_time('mysql')
+    public function get_statistics() {
+        $today = date('Y-m-d');
+        
+        return array(
+            'total' => intval($this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}")),
+            'today' => intval($this->wpdb->get_var($this->wpdb->prepare(
+                "SELECT COUNT(*) FROM {$this->table_name} WHERE reservation_date = %s", $today
+            ))),
+            'pending' => intval($this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name} WHERE status = 'pending'")),
+            'confirmed' => intval($this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name} WHERE status = 'confirmed'"))
         );
+    }
+    
+    public function get_by_date($date) {
+        return $this->wpdb->get_results($this->wpdb->prepare(
+            "SELECT * FROM {$this->table_name} WHERE reservation_date = %s ORDER BY reservation_time ASC",
+            $date
+        ));
+    }
+    
+    public function create($data) {
+        $data['created_at'] = current_time('mysql');
+        $data['updated_at'] = current_time('mysql');
         
-        $data = array_merge($defaults, $data);
+        return $this->wpdb->insert($this->table_name, $data);
+    }
+    
+    public function update($id, $data) {
+        $data['updated_at'] = current_time('mysql');
         
-        // Validate required fields
-        if (empty($data['customer_name']) || empty($data['customer_email'])) {
-            error_log('YRR: Missing required fields - name or email');
-            return false;
-        }
-        
-        // Ensure proper time format
-        if (!empty($data['reservation_time']) && strlen($data['reservation_time']) === 5) {
-            $data['reservation_time'] = $data['reservation_time'] . ':00';
-        }
-        
-        $result = $this->wpdb->insert($this->table_name, $data);
-        
-        if ($result === false) {
-            error_log('YRR: Failed to create reservation - ' . $this->wpdb->last_error);
-            error_log('YRR: Data attempted: ' . print_r($data, true));
-            return false;
-        }
-        
-        return $this->wpdb->insert_id;
+        return $this->wpdb->update(
+            $this->table_name,
+            $data,
+            array('id' => $id)
+        );
+    }
+    
+    public function delete($id) {
+        return $this->wpdb->delete(
+            $this->table_name,
+            array('id' => $id)
+        );
     }
     
     public function get_all() {
-        return $this->wpdb->get_results("SELECT * FROM {$this->table_name} ORDER BY reservation_date DESC, reservation_time DESC");
+        return $this->wpdb->get_results(
+            "SELECT * FROM {$this->table_name} ORDER BY created_at DESC"
+        );
+    }
+    
+    public function get_weekly_reservations($start_date = null) {
+        if (!$start_date) {
+            $start_date = date('Y-m-d', strtotime('monday this week'));
+        }
+        
+        $end_date = date('Y-m-d', strtotime($start_date . ' +6 days'));
+        
+        return $this->wpdb->get_results($this->wpdb->prepare(
+            "SELECT * FROM {$this->table_name} 
+             WHERE reservation_date BETWEEN %s AND %s 
+             ORDER BY reservation_date ASC, reservation_time ASC",
+            $start_date, $end_date
+        ));
+    }
+    
+    public function get_total_count($filters = array()) {
+        $where_clause = $this->build_where_clause($filters);
+        $sql = "SELECT COUNT(*) FROM {$this->table_name} {$where_clause}";
+        return intval($this->wpdb->get_var($sql));
+    }
+    
+    public function get_paginated($per_page = 20, $offset = 0, $filters = array()) {
+        if (isset($_GET['status']) && !empty($_GET['status'])) {
+            $filters['status'] = sanitize_text_field($_GET['status']);
+        }
+        if (isset($_GET['date_from']) && !empty($_GET['date_from'])) {
+            $filters['date_from'] = sanitize_text_field($_GET['date_from']);
+        }
+        if (isset($_GET['date_to']) && !empty($_GET['date_to'])) {
+            $filters['date_to'] = sanitize_text_field($_GET['date_to']);
+        }
+        if (isset($_GET['search']) && !empty($_GET['search'])) {
+            $filters['search'] = sanitize_text_field($_GET['search']);
+        }
+        
+        $where_clause = $this->build_where_clause($filters);
+        
+        return $this->wpdb->get_results($this->wpdb->prepare(
+            "SELECT * FROM {$this->table_name} {$where_clause} 
+             ORDER BY reservation_date DESC, reservation_time DESC 
+             LIMIT %d OFFSET %d",
+            $per_page, $offset
+        ));
+    }
+    
+    private function build_where_clause($filters = array()) {
+        $conditions = array();
+        
+        if (!empty($filters['status'])) {
+            $conditions[] = $this->wpdb->prepare("status = %s", $filters['status']);
+        }
+        
+        if (!empty($filters['date_from'])) {
+            $conditions[] = $this->wpdb->prepare("reservation_date >= %s", $filters['date_from']);
+        }
+        
+        if (!empty($filters['date_to'])) {
+            $conditions[] = $this->wpdb->prepare("reservation_date <= %s", $filters['date_to']);
+        }
+        
+        if (!empty($filters['search'])) {
+            $search = '%' . $this->wpdb->esc_like($filters['search']) . '%';
+            $conditions[] = $this->wpdb->prepare("(customer_name LIKE %s OR customer_email LIKE %s)", $search, $search);
+        }
+        
+        return !empty($conditions) ? 'WHERE ' . implode(' AND ', $conditions) : '';
     }
     
     public function get_by_id($id) {
@@ -73,157 +138,12 @@ class YRR_Reservation_Model {
         ));
     }
     
-    public function get_by_date($date) {
-        return $this->wpdb->get_results($this->wpdb->prepare(
-            "SELECT * FROM {$this->table_name} WHERE reservation_date = %s ORDER BY reservation_time",
-            $date
+    public function get_by_code($code) {
+        return $this->wpdb->get_row($this->wpdb->prepare(
+            "SELECT * FROM {$this->table_name} WHERE reservation_code = %s",
+            $code
         ));
     }
-    
-    public function get_by_date_range($start_date, $end_date) {
-        return $this->wpdb->get_results($this->wpdb->prepare(
-            "SELECT * FROM {$this->table_name} 
-             WHERE reservation_date BETWEEN %s AND %s 
-             ORDER BY reservation_date, reservation_time",
-            $start_date, $end_date
-        ));
-    }
-    
-    public function get_weekly_reservations($start_date = null) {
-        if (!$start_date) {
-            $start_date = date('Y-m-d', strtotime('monday this week'));
-        }
-        $end_date = date('Y-m-d', strtotime($start_date . ' +6 days'));
-        
-        return $this->get_by_date_range($start_date, $end_date);
-    }
-    
-    public function update($id, $data) {
-        $data['updated_at'] = current_time('mysql');
-        
-        // Ensure proper time format
-        if (!empty($data['reservation_time']) && strlen($data['reservation_time']) === 5) {
-            $data['reservation_time'] = $data['reservation_time'] . ':00';
-        }
-        
-        return $this->wpdb->update($this->table_name, $data, array('id' => $id));
-    }
-    
-    public function delete($id) {
-        return $this->wpdb->delete($this->table_name, array('id' => $id));
-    }
-    
-    public function get_statistics() {
-        $total = $this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
-        $confirmed = $this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name} WHERE status = 'confirmed'");
-        $pending = $this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name} WHERE status = 'pending'");
-        $today = $this->wpdb->get_var($this->wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->table_name} WHERE reservation_date = %s",
-            date('Y-m-d')
-        ));
-        
-        return array(
-            'total' => intval($total),
-            'confirmed' => intval($confirmed),
-            'pending' => intval($pending),
-            'today' => intval($today)
-        );
-    }
-    
-    public function get_filtered_reservations($search = '', $status = '', $date_from = '', $date_to = '') {
-        $where_conditions = array();
-        $params = array();
-        
-        if (!empty($search)) {
-            $where_conditions[] = "(customer_name LIKE %s OR customer_email LIKE %s OR customer_phone LIKE %s OR reservation_code LIKE %s)";
-            $search_term = '%' . $search . '%';
-            $params[] = $search_term;
-            $params[] = $search_term;
-            $params[] = $search_term;
-            $params[] = $search_term;
-        }
-        
-        if (!empty($status)) {
-            $where_conditions[] = "status = %s";
-            $params[] = $status;
-        }
-        
-        if (!empty($date_from)) {
-            $where_conditions[] = "reservation_date >= %s";
-            $params[] = $date_from;
-        }
-        
-        if (!empty($date_to)) {
-            $where_conditions[] = "reservation_date <= %s";
-            $params[] = $date_to;
-        }
-        
-        $where_clause = !empty($where_conditions) ? 'WHERE ' . implode(' AND ', $where_conditions) : '';
-        
-        $sql = "SELECT * FROM {$this->table_name} $where_clause ORDER BY reservation_date DESC, reservation_time DESC";
-        
-        if (!empty($params)) {
-            return $this->wpdb->get_results($this->wpdb->prepare($sql, ...$params));
-        } else {
-            return $this->wpdb->get_results($sql);
-        }
-    }
-    
-
-/**
- * Get total count for pagination
- */
-public function get_total_count($filters = array()) {
-    $where_clause = $this->build_where_clause($filters);
-    
-    return $this->wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name} {$where_clause}");
 }
 
-/**
- * Get paginated reservations
- */
-public function get_paginated($per_page = 20, $offset = 0, $filters = array()) {
-    $where_clause = $this->build_where_clause($filters);
-    
-    return $this->wpdb->get_results($this->wpdb->prepare(
-        "SELECT * FROM {$this->table_name} {$where_clause} 
-         ORDER BY reservation_date DESC, reservation_time DESC 
-         LIMIT %d OFFSET %d",
-        $per_page, $offset
-    ));
 }
-
-private function build_where_clause($filters = array()) {
-    global $wpdb;
-    
-    $conditions = array();
-    
-    if (!empty($filters['status'])) {
-        $conditions[] = $wpdb->prepare("status = %s", $filters['status']);
-    }
-    
-    if (!empty($filters['date_from'])) {
-        $conditions[] = $wpdb->prepare("reservation_date >= %s", $filters['date_from']);
-    }
-    
-    if (!empty($filters['date_to'])) {
-        $conditions[] = $wpdb->prepare("reservation_date <= %s", $filters['date_to']);
-    }
-    
-    if (!empty($filters['search'])) {
-        $search = '%' . $wpdb->esc_like($filters['search']) . '%';
-        $conditions[] = $wpdb->prepare("(customer_name LIKE %s OR customer_email LIKE %s)", $search, $search);
-    }
-    
-    return !empty($conditions) ? 'WHERE ' . implode(' AND ', $conditions) : '';
-}
-
-
-    private function generate_reservation_code() {
-        $prefix = 'YRR';
-        $date = date('Ymd');
-        $random = str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
-        return $prefix . '-' . $date . '-' . $random;
-    }
-}
-?>

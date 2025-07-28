@@ -1,7 +1,48 @@
 <?php
-/**
- * Tables Model - Yenolx Restaurant Reservation v1.5
- */
+if (!defined('ABSPATH')) exit;
+
+if (!class_exists('YRR_Tables_Model')) {
+
+class YRR_Tables_Model {
+    private $wpdb;
+    private $table_name;
+    
+    public function __construct() {
+        global $wpdb;
+        $this->wpdb = $wpdb;
+        $this->table_name = $wpdb->prefix . 'yrr_tables';
+    }
+    
+    public function get_all_tables() {
+        return $this->wpdb->get_results("SELECT * FROM {$this->table_name} ORDER BY table_number ASC");
+    }
+    
+    public function get_available_tables($date, $time, $min_capacity = 1) {
+        return $this->wpdb->get_results($this->wpdb->prepare(
+            "SELECT t.* FROM {$this->table_name} t
+             WHERE t.capacity >= %d 
+             AND t.status = 'available'
+             AND t.id NOT IN (
+                 SELECT DISTINCT table_id FROM {$this->wpdb->prefix}yrr_reservations 
+                 WHERE reservation_date = %s 
+                 AND reservation_time = %s 
+                 AND status IN ('confirmed', 'pending')
+                 AND table_id IS NOT NULL
+             )
+             ORDER BY t.capacity ASC, t.table_number ASC",
+            $min_capacity, $date, $time
+        ));
+    }
+    
+    public function get_table_number($table_id) {
+        return $this->wpdb->get_var($this->wpdb->prepare(
+            "SELECT table_number FROM {$this->table_name} WHERE id = %d",
+            $table_id
+        ));
+    }
+}
+
+}
 
 if (!defined('ABSPATH')) exit;
 
