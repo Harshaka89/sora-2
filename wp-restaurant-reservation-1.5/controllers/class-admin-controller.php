@@ -3,6 +3,76 @@
  * Admin Controller - Yenolx Restaurant Reservation v1.5.1
  * FIXED: Removed duplicate create_manual_reservation method
  */
+/**
+ * ✅ SIMPLE: Time Slots Management Page
+ */
+public function simple_time_slots_page() {
+    $this->check_permissions('yrr_manage_settings');
+    
+    // Handle settings save
+    if (isset($_POST['save_simple_slots']) && wp_verify_nonce($_POST['slots_nonce'], 'yrr_simple_slots')) {
+        $this->save_simple_time_slots();
+    }
+    
+    $settings = $this->settings_model->get_all();
+    $available_slots = $this->settings_model->get_simple_time_slots();
+    
+    $this->load_view('admin/simple-time-slots', array(
+        'settings' => $settings,
+        'available_slots' => $available_slots
+    ));
+}
+
+/**
+ * ✅ SIMPLE: Save time slots settings
+ */
+private function save_simple_time_slots() {
+    $settings = array(
+        'enabled_time_slots' => isset($_POST['enabled_slots']) ? implode(',', $_POST['enabled_slots']) : '',
+        'max_bookings_per_slot' => intval($_POST['max_bookings_per_slot'] ?? 5),
+        'booking_duration' => intval($_POST['booking_duration'] ?? 60),
+        'enable_time_slots' => isset($_POST['enable_time_slots']) ? '1' : '0'
+    );
+    
+    $saved = 0;
+    foreach ($settings as $name => $value) {
+        if ($this->settings_model->set($name, $value)) {
+            $saved++;
+        }
+    }
+    
+    wp_redirect(add_query_arg('message', 'slots_saved', admin_url('admin.php?page=yrr-simple-slots')));
+    exit;
+}
+
+/**
+ * ✅ Update menu to include simple time slots
+ */
+public function add_admin_menu() {
+    add_menu_page(
+        'Yenolx Reservations',
+        'Reservations', 
+        'yrr_view_dashboard',
+        'yenolx-reservations',
+        array($this, 'dashboard_page'),
+        'dashicons-calendar-alt',
+        26
+    );
+    
+    add_submenu_page('yenolx-reservations', 'Dashboard', 'Dashboard', 'yrr_view_dashboard', 'yenolx-reservations', array($this, 'dashboard_page'));
+    add_submenu_page('yenolx-reservations', 'All Reservations', 'All Reservations', 'yrr_manage_reservations', 'yrr-all-reservations', array($this, 'all_reservations_page'));
+    
+    // ✅ SIMPLE: Time Slots Page
+    add_submenu_page('yenolx-reservations', 'Simple Time Slots', 'Time Slots', 'yrr_manage_settings', 'yrr-simple-slots', array($this, 'simple_time_slots_page'));
+    
+    if ($this->is_super_admin()) {
+        add_submenu_page('yenolx-reservations', 'Tables', 'Tables', 'yrr_manage_tables', 'yrr-tables', array($this, 'tables_page'));
+        add_submenu_page('yenolx-reservations', 'Hours', 'Hours', 'yrr_manage_hours', 'yrr-hours', array($this, 'hours_page'));
+        add_submenu_page('yenolx-reservations', 'Settings', 'Settings', 'yrr_manage_settings', 'yrr-settings', array($this, 'settings_page'));
+    }
+}
+
+
 
 if (!defined('ABSPATH')) exit;
 
