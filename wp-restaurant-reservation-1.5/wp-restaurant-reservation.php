@@ -1,11 +1,219 @@
 <?php
 /**
- * Plugin Name: Yenolx Restaurant Reservation
- * Description: Advanced restaurant reservation management with discount coupons, table booking, and dynamic pricing
- * Version: 1.5.1
- * Author: Yenolx
- * Text Domain: yenolx-restaurant
+ * Plugin Name: Yenolx Restaurant Reservation System
+ * Plugin URI: https://yenolx.com
+ * Description: Complete restaurant reservation system with time slots and table management
+ * Version: 1.5.0
+ * Author: Yenolx Team
+ * Text Domain: yenolx-reservations
  */
+
+if (!defined('ABSPATH')) exit;
+
+// Define plugin constants
+define('YRR_VERSION', '1.5.0');
+define('YRR_PLUGIN_PATH', plugin_dir_path(__FILE__));
+define('YRR_PLUGIN_URL', plugin_dir_url(__FILE__));
+
+/**
+ * ✅ DATABASE SETUP - Complete Tables Structure
+ */
+function yrr_create_database_tables() {
+    global $wpdb;
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    $charset_collate = $wpdb->get_charset_collate();
+    
+    // Settings table
+    $settings_table = "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}yrr_settings (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        setting_name varchar(100) NOT NULL,
+        setting_value longtext DEFAULT NULL,
+        created_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY setting_name (setting_name)
+    ) $charset_collate;";
+    
+    // Tables management
+    $tables_table = "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}yrr_tables (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        table_number varchar(20) NOT NULL,
+        capacity int(11) NOT NULL,
+        status varchar(20) DEFAULT 'available',
+        location varchar(100) DEFAULT '',
+        created_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY table_number (table_number)
+    ) $charset_collate;";
+    
+    // Time slots management
+    $time_slots_table = "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}yrr_time_slots (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        slot_time time NOT NULL,
+        slot_name varchar(50) NOT NULL,
+        max_reservations int(11) DEFAULT 10,
+        is_active boolean DEFAULT 1,
+        created_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY slot_time (slot_time)
+    ) $charset_collate;";
+    
+    // Reservations table - connects Customer + Time Slot + Table
+    $reservations_table = "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}yrr_reservations (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        reservation_code varchar(20) NOT NULL,
+        customer_name varchar(100) NOT NULL,
+        customer_email varchar(100) NOT NULL,
+        customer_phone varchar(20) NOT NULL,
+        party_size int(11) NOT NULL,
+        reservation_date date NOT NULL,
+        time_slot_id int(11) NOT NULL,
+        table_id int(11) DEFAULT NULL,
+        special_requests text DEFAULT NULL,
+        status varchar(20) DEFAULT 'pending',
+        notes text DEFAULT NULL,
+        created_at datetime DEFAULT CURRENT_TIMESTAMP,
+        updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY reservation_code (reservation_code),
+        KEY time_slot_id (time_slot_id),
+        KEY table_id (table_id),
+        KEY reservation_date (reservation_date)
+    ) $charset_collate;";
+    
+    dbDelta($settings_table);
+    dbDelta($tables_table);
+    dbDelta($time_slots_table);
+    dbDelta($reservations_table);
+    
+    // Insert default data
+    yrr_insert_default_data();
+}
+
+/**
+ * ✅ INSERT DEFAULT DATA
+ */
+function yrr_insert_default_data() {
+    global $wpdb;
+    
+    // Default settings
+    $default_settings = array(
+        'restaurant_name' => get_bloginfo('name'),
+        'restaurant_email' => get_option('admin_email'),
+        'restaurant_phone' => '',
+        'max_party_size' => '12',
+        'restaurant_open' => '1'
+    );
+    
+    foreach ($default_settings as $name => $value) {
+        $existing = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}yrr_settings WHERE setting_name = %s", $name
+        ));
+        if (!$existing) {
+            $wpdb->insert($wpdb->prefix . 'yrr_settings', array(
+                'setting_name' => $name, 'setting_value' => $value
+            ));
+        }
+    }
+    
+    // Default time slots
+    $default_slots = array(
+        '10:00:00' => '10:00 AM',
+        '11:00:00' => '11:00 AM',
+        '12:00:00' => '12:00 PM',
+        '13:00:00' => '1:00 PM',
+        '14:00:00' => '2:00 PM',
+        '15:00:00' => '3:00 PM',
+        '16:00:00' => '4:00 PM',
+        '17:00:00' => '5:00 PM',
+        '18:00:00' => '6:00 PM',
+        '19:00:00' => '7:00 PM',
+        '20:00:00' => '8:00 PM',
+        '21:00:00' => '9:00 PM'
+    );
+    
+    foreach ($default_slots as $time => $name) {
+        $existing = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}yrr_time_slots WHERE slot_time = %s", $time
+        ));
+        if (!$existing) {
+            $wpdb->insert($wpdb->prefix . 'yrr_time_slots', array(
+                'slot_time' => $time,
+                'slot_name' => $name,
+                'max_reservations' => 10,
+                'is_active' => 1
+            ));
+        }
+    }
+    
+    // Default tables
+    $default_tables = array(
+        array('table_number' => 'T1', 'capacity' => 2, 'location' => 'Window'),
+        array('table_number' => 'T2', 'capacity' => 4, 'location' => 'Center'),
+        array('table_number' => 'T3', 'capacity' => 6, 'location' => 'Private'),
+        array('table_number' => 'T4', 'capacity' => 8, 'location' => 'VIP')
+    );
+    
+    foreach ($default_tables as $table) {
+        $existing = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}yrr_tables WHERE table_number = %s", $table['table_number']
+        ));
+        if (!$existing) {
+            $wpdb->insert($wpdb->prefix . 'yrr_tables', $table);
+        }
+    }
+}
+
+/**
+ * ✅ MAIN PLUGIN CLASS
+ */
+class YenolxRestaurantReservation {
+    private static $instance = null;
+    
+    public function __construct() {
+        register_activation_hook(__FILE__, array($this, 'activate'));
+        add_action('plugins_loaded', array($this, 'init'));
+    }
+    
+    public static function get_instance() {
+        if (null === self::$instance) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+    
+    public function init() {
+        $this->load_dependencies();
+        if (is_admin()) {
+            $this->init_admin();
+        }
+    }
+    
+    private function load_dependencies() {
+        require_once YRR_PLUGIN_PATH . 'models/class-reservation-model.php';
+        require_once YRR_PLUGIN_PATH . 'models/class-settings-model.php';
+        require_once YRR_PLUGIN_PATH . 'models/class-tables-model.php';
+        require_once YRR_PLUGIN_PATH . 'models/class-time-slots-model.php';
+        require_once YRR_PLUGIN_PATH . 'controllers/class-admin-controller.php';
+    }
+    
+    private function init_admin() {
+        $admin_controller = new YRR_Admin_Controller();
+        add_action('admin_menu', array($admin_controller, 'add_admin_menu'));
+    }
+    
+    public function activate() {
+        yrr_create_database_tables();
+        flush_rewrite_rules();
+    }
+}
+
+// Initialize plugin
+function yrr_init() {
+    YenolxRestaurantReservation::get_instance();
+}
+add_action('plugins_loaded', 'yrr_init');
+
+
 
 if (defined('YRR_PLUGIN_LOADED')) return;
 define('YRR_PLUGIN_LOADED', true);

@@ -1,8 +1,277 @@
 <?php
-/**
- * Admin Controller - Yenolx Restaurant Reservation v1.5.1
- * FIXED: Removed duplicate create_manual_reservation method
- */
+if (!defined('ABSPATH')) exit;
+
+class YRR_Admin_Controller {
+    private $reservation_model;
+    private $settings_model;
+    private $tables_model;
+    private $time_slots_model;
+    
+    public function __construct() {
+        $this->reservation_model = new YRR_Reservation_Model();
+        $this->settings_model = new YRR_Settings_Model();
+        $this->tables_model = new YRR_Tables_Model();
+        $this->time_slots_model = new YRR_Time_Slots_Model();
+    }
+    
+    public function add_admin_menu() {
+        add_menu_page(
+            'Yenolx Reservations',
+            'Reservations',
+            'manage_options',
+            'yenolx-reservations',
+            array($this, 'dashboard_page'),
+            'dashicons-calendar-alt',
+            26
+        );
+        
+        add_submenu_page('yenolx-reservations', 'Dashboard', 'Dashboard', 'manage_options', 'yenolx-reservations', array($this, 'dashboard_page'));
+        add_submenu_page('yenolx-reservations', 'All Reservations', 'All Reservations', 'manage_options', 'yrr-all-reservations', array($this, 'all_reservations_page'));
+        add_submenu_page('yenolx-reservations', 'Time Slots', 'Time Slots', 'manage_options', 'yrr-time-slots', array($this, 'time_slots_page'));
+        add_submenu_page('yenolx-reservations', 'Tables', 'Tables', 'manage_options', 'yrr-tables', array($this, 'tables_page'));
+        add_submenu_page('yenolx-reservations', 'Settings', 'Settings', 'manage_options', 'yrr-settings', array($this, 'settings_page'));
+    }
+    
+    public function dashboard_page() {
+        // Handle create/edit reservations
+        if (isset($_POST['create_reservation']) && wp_verify_nonce($_POST['reservation_nonce'], 'yrr_reservation')) {
+            $this->handle_create_reservation();
+        }
+        
+        if (isset($_POST['edit_reservation']) && wp_verify_nonce($_POST['edit_nonce'], 'yrr_edit_reservation')) {
+            $this->handle_edit_reservation();
+        }
+        
+        // Handle reservation actions
+        if (isset($_GET['action']) && isset($_GET['id']) && wp_verify_nonce($_GET['_wpnonce'], 'yrr_action')) {
+            $this->handle_reservation_action();
+        }
+        
+        // Get data
+        $statistics = $this->reservation_model->get_statistics();
+        $today_reservations = $this->reservation_model->get_by_date(date('Y-m-d'));
+        $time_slots = $this->time_slots_model->get_active_slots();
+        $tables = $this->tables_model->get_all();
+        $restaurant_name = $this->settings_model->get('restaurant_name', get_bloginfo('name'));
+        
+        $this->load_view('admin/dashboard', array(
+            'statistics' => $statistics,
+            'today_reservations' => $today_reservations,
+            'time_slots' => $time_slots,
+            'tables' => $tables,
+            'restaurant_name' => $restaurant_name
+        ));
+    }
+    
+    public function all_reservations_page() {
+        $reservations = $this->reservation_model->get_all_with_details();
+        $time_slots = $this->time_slots_model->get_all();
+        $tables = $this->tables_model->get_all();
+        
+        $this->load_view('admin/all-reservations', array(
+            'reservations' => $reservations,
+            'time_slots' => $time_slots,
+            'tables' => $tables
+        ));
+    }
+    
+    public function time_slots_page() {
+        // Handle time slot actions
+        if (isset($_POST['add_time_slot']) && wp_verify_nonce($_POST['time_slot_nonce'], 'yrr_time_slot')) {
+            $this->handle_add_time_slot();
+        }
+        
+        if (isset($_POST['edit_time_slot']) && wp_verify_nonce($_POST['edit_time_slot_nonce'], 'yrr_edit_time_slot')) {
+            $this->handle_edit_time_slot();
+        }
+        
+        if (isset($_GET['delete_slot']) && wp_verify_nonce($_GET['_wpnonce'], 'yrr_delete_slot')) {
+            $this->time_slots_model->delete(intval($_GET['delete_slot']));
+            wp_redirect(admin_url('admin.php?page=yrr-time-slots&message=deleted'));
+            exit;
+        }
+        
+        $time_slots = $this->time_slots_model->get_all();
+        $this->load_view('admin/time-slots', array('time_slots' => $time_slots));
+    }
+    
+    public function tables_page() {
+        // Handle table actions
+        if (isset($_POST['add_table']) && wp_verify_nonce($_POST['table_nonce'], 'yrr_table')) {
+            $this->handle_add_table();
+        }
+        
+        if (isset($_POST['edit_table']) && wp_verify_nonce($_POST['edit_table_nonce'], 'yrr_edit_table')) {
+            $this->handle_edit_table();
+        }
+        
+        if (isset($_GET['delete_table']) && wp_verify_nonce($_GET['_wpnonce'], 'yrr_delete_table')) {
+            $this->tables_model->delete(intval($_GET['delete_table']));
+            wp_redirect(admin_url('admin.php?page=yrr-tables&message=deleted'));
+            exit;
+        }
+        
+        $tables = $this->tables_model->get_all();
+        $this->load_view('admin/tables', array('tables' => $tables));
+    }
+    
+    public function settings_page() {
+        if (isset($_POST['save_settings']) && wp_verify_nonce($_POST['settings_nonce'], 'yrr_settings')) {
+            $this->handle_save_settings();
+        }
+        
+        $settings = $this->settings_model->get_all();
+        $this->load_view('admin/settings', array('settings' => $settings));
+    }
+    
+    // Handler methods
+    private function handle_create_reservation() {
+        $data = array(
+            'customer_name' => $_POST['customer_name'],
+            'customer_email' => $_POST['customer_email'],
+            'customer_phone' => $_POST['customer_phone'],
+            'party_size' => $_POST['party_size'],
+            'reservation_date' => $_POST['reservation_date'],
+            'time_slot_id' => $_POST['time_slot_id'],
+            'table_id' => $_POST['table_id'],
+            'special_requests' => $_POST['special_requests'],
+            'status' => $_POST['status'] ?? 'pending',
+            'notes' => $_POST['notes'] ?? ''
+        );
+        
+        $result = $this->reservation_model->create($data);
+        $message = $result ? 'created' : 'error';
+        wp_redirect(admin_url('admin.php?page=yenolx-reservations&message=' . $message));
+        exit;
+    }
+    
+    private function handle_edit_reservation() {
+        $id = intval($_POST['reservation_id']);
+        $data = array(
+            'customer_name' => $_POST['customer_name'],
+            'customer_email' => $_POST['customer_email'],
+            'customer_phone' => $_POST['customer_phone'],
+            'party_size' => $_POST['party_size'],
+            'reservation_date' => $_POST['reservation_date'],
+            'time_slot_id' => $_POST['time_slot_id'],
+            'table_id' => $_POST['table_id'],
+            'special_requests' => $_POST['special_requests'],
+            'status' => $_POST['status'],
+            'notes' => $_POST['notes']
+        );
+        
+        $result = $this->reservation_model->update($id, $data);
+        $message = $result ? 'updated' : 'error';
+        wp_redirect(admin_url('admin.php?page=yenolx-reservations&message=' . $message));
+        exit;
+    }
+    
+    private function handle_reservation_action() {
+        $id = intval($_GET['id']);
+        $action = $_GET['action'];
+        
+        switch ($action) {
+            case 'confirm':
+                $this->reservation_model->update($id, array('status' => 'confirmed'));
+                $message = 'confirmed';
+                break;
+            case 'cancel':
+                $this->reservation_model->update($id, array('status' => 'cancelled'));
+                $message = 'cancelled';
+                break;
+            case 'delete':
+                $this->reservation_model->delete($id);
+                $message = 'deleted';
+                break;
+            default:
+                $message = 'error';
+        }
+        
+        wp_redirect(admin_url('admin.php?page=yenolx-reservations&message=' . $message));
+        exit;
+    }
+    
+    private function handle_add_time_slot() {
+        $data = array(
+            'slot_time' => $_POST['slot_time'],
+            'slot_name' => $_POST['slot_name'],
+            'max_reservations' => $_POST['max_reservations'],
+            'is_active' => isset($_POST['is_active'])
+        );
+        
+        $result = $this->time_slots_model->create($data);
+        $message = $result ? 'created' : 'error';
+        wp_redirect(admin_url('admin.php?page=yrr-time-slots&message=' . $message));
+        exit;
+    }
+    
+    private function handle_edit_time_slot() {
+        $id = intval($_POST['slot_id']);
+        $data = array(
+            'slot_time' => $_POST['slot_time'],
+            'slot_name' => $_POST['slot_name'],
+            'max_reservations' => $_POST['max_reservations'],
+            'is_active' => isset($_POST['is_active'])
+        );
+        
+        $result = $this->time_slots_model->update($id, $data);
+        $message = $result ? 'updated' : 'error';
+        wp_redirect(admin_url('admin.php?page=yrr-time-slots&message=' . $message));
+        exit;
+    }
+    
+    private function handle_add_table() {
+        $data = array(
+            'table_number' => $_POST['table_number'],
+            'capacity' => $_POST['capacity'],
+            'location' => $_POST['location']
+        );
+        
+        $result = $this->tables_model->create($data);
+        $message = $result ? 'created' : 'error';
+        wp_redirect(admin_url('admin.php?page=yrr-tables&message=' . $message));
+        exit;
+    }
+    
+    private function handle_edit_table() {
+        $id = intval($_POST['table_id']);
+        $data = array(
+            'table_number' => $_POST['table_number'],
+            'capacity' => $_POST['capacity'],
+            'location' => $_POST['location']
+        );
+        
+        $result = $this->tables_model->update($id, $data);
+        $message = $result ? 'updated' : 'error';
+        wp_redirect(admin_url('admin.php?page=yrr-tables&message=' . $message));
+        exit;
+    }
+    
+    private function handle_save_settings() {
+        $settings = array('restaurant_name', 'restaurant_email', 'restaurant_phone', 'max_party_size', 'restaurant_open');
+        
+        foreach ($settings as $setting) {
+            if (isset($_POST[$setting])) {
+                $this->settings_model->set($setting, $_POST[$setting]);
+            }
+        }
+        
+        wp_redirect(admin_url('admin.php?page=yrr-settings&message=saved'));
+        exit;
+    }
+    
+    private function load_view($view, $data = array()) {
+        extract($data);
+        $view_file = YRR_PLUGIN_PATH . 'views/' . $view . '.php';
+        
+        if (file_exists($view_file)) {
+            include $view_file;
+        } else {
+            echo '<div class="wrap"><h1>View Not Found</h1><p>View file: ' . $view . '.php not found.</p></div>';
+        }
+    }
+}
+
 
 if (!defined('ABSPATH')) exit;
 

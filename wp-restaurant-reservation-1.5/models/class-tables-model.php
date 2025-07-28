@@ -1,7 +1,90 @@
 <?php
-/**
- * Tables Model - Yenolx Restaurant Reservation v1.5
- */
+if (!defined('ABSPATH')) exit;
+
+class YRR_Tables_Model {
+    private $wpdb;
+    private $table_name;
+    
+    public function __construct() {
+        global $wpdb;
+        $this->wpdb = $wpdb;
+        $this->table_name = $wpdb->prefix . 'yrr_tables';
+    }
+    
+    /**
+     * ✅ GET ALL TABLES
+     */
+    public function get_all() {
+        return $this->wpdb->get_results(
+            "SELECT * FROM {$this->table_name} ORDER BY table_number ASC"
+        );
+    }
+    
+    /**
+     * ✅ GET AVAILABLE TABLES FOR DATE/TIME SLOT
+     */
+    public function get_available_for_slot($date, $time_slot_id, $party_size, $exclude_reservation_id = null) {
+        $where_clause = "r.reservation_date = %s AND r.time_slot_id = %d AND r.status IN ('confirmed', 'pending')";
+        $params = array($date, $time_slot_id);
+        
+        if ($exclude_reservation_id) {
+            $where_clause .= " AND r.id != %d";
+            $params[] = $exclude_reservation_id;
+        }
+        
+        return $this->wpdb->get_results($this->wpdb->prepare("
+            SELECT t.* FROM {$this->table_name} t
+            WHERE t.status = 'available' 
+            AND t.capacity >= %d
+            AND t.id NOT IN (
+                SELECT r.table_id FROM {$this->wpdb->prefix}yrr_reservations r
+                WHERE {$where_clause} AND r.table_id IS NOT NULL
+            )
+            ORDER BY t.capacity ASC, t.table_number ASC
+        ", $party_size, ...$params));
+    }
+    
+    /**
+     * ✅ CREATE TABLE
+     */
+    public function create($data) {
+        return $this->wpdb->insert($this->table_name, array(
+            'table_number' => sanitize_text_field($data['table_number']),
+            'capacity' => intval($data['capacity']),
+            'location' => sanitize_text_field($data['location'] ?? ''),
+            'status' => 'available'
+        ));
+    }
+    
+    /**
+     * ✅ UPDATE TABLE
+     */
+    public function update($id, $data) {
+        $update_data = array();
+        if (isset($data['table_number'])) $update_data['table_number'] = sanitize_text_field($data['table_number']);
+        if (isset($data['capacity'])) $update_data['capacity'] = intval($data['capacity']);
+        if (isset($data['location'])) $update_data['location'] = sanitize_text_field($data['location']);
+        if (isset($data['status'])) $update_data['status'] = sanitize_text_field($data['status']);
+        
+        return $this->wpdb->update($this->table_name, $update_data, array('id' => $id));
+    }
+    
+    /**
+     * ✅ DELETE TABLE
+     */
+    public function delete($id) {
+        return $this->wpdb->delete($this->table_name, array('id' => $id));
+    }
+    
+    /**
+     * ✅ GET SINGLE TABLE
+     */
+    public function get_by_id($id) {
+        return $this->wpdb->get_row($this->wpdb->prepare(
+            "SELECT * FROM {$this->table_name} WHERE id = %d", $id
+        ));
+    }
+}
 
 if (!defined('ABSPATH')) exit;
 
