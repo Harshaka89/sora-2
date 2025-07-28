@@ -1,7 +1,7 @@
 <?php
 if (!defined('ABSPATH')) exit;
 
-// Get current week or requested week
+// Get current week or requested week...
 $current_week_start = isset($_GET['week_start']) ? sanitize_text_field($_GET['week_start']) : date('Y-m-d', strtotime('monday this week'));
 $week_end = date('Y-m-d', strtotime($current_week_start . ' +6 days'));
 
