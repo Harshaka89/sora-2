@@ -17,7 +17,9 @@ define('YRR_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('YRR_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('YRR_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
-// Enhanced database structure for v1.5.1 with coupons
+/**
+ * Enhanced database structure for v1.5.1 with coupons
+ */
 function yrr_ensure_database_structure() {
     if (!is_admin() || wp_doing_ajax()) return;
     
@@ -144,6 +146,9 @@ function yrr_ensure_database_structure() {
     set_transient('yrr_db_check_done_v151', true, DAY_IN_SECONDS);
 }
 
+/**
+ * Insert default data into database tables
+ */
 function yrr_insert_default_data() {
     global $wpdb;
     
@@ -159,7 +164,8 @@ function yrr_insert_default_data() {
         'booking_time_slots' => '30',
         'max_booking_advance_days' => '60',
         'currency_symbol' => '$',
-        'enable_coupons' => '1'
+        'enable_coupons' => '1',
+        'time_slot_duration' => '60'
     );
     
     foreach ($settings as $name => $value) {
@@ -267,11 +273,9 @@ function yrr_insert_default_data() {
     }
 }
 
-add_action('admin_init', 'yrr_ensure_database_structure', 1);
-
-// Safe autoloader with error handling
-spl_autoload_register('yrr_autoloader');
-
+/**
+ * Safe autoloader with error handling
+ */
 function yrr_autoloader($class_name) {
     if (strpos($class_name, 'YRR_') !== 0) return;
     
@@ -287,7 +291,11 @@ function yrr_autoloader($class_name) {
     }
 }
 
-// Enhanced plugin initialization with error handling
+/**
+ * Enhanced plugin initialization with error handling
+ */
+if (!class_exists('YRR_Plugin')) {
+
 class YRR_Plugin {
     private $loader;
     private $controllers = array();
@@ -368,6 +376,25 @@ class YRR_Plugin {
             $this->loader->add_action('wp_ajax_yrr_validate_coupon', $this->controllers['coupons'], 'ajax_validate_coupon');
             $this->loader->add_action('wp_ajax_nopriv_yrr_validate_coupon', $this->controllers['coupons'], 'ajax_validate_coupon');
         }
+        
+        // Time slot preview AJAX
+        $this->loader->add_action('wp_ajax_get_time_slot_preview', $this, 'ajax_get_time_slot_preview');
+    }
+    
+    public function ajax_get_time_slot_preview() {
+        check_ajax_referer('yrr_ajax_nonce', 'nonce');
+        
+        $duration = intval($_POST['duration'] ?? 60);
+        
+        if (!class_exists('YRR_Settings_Model')) {
+            wp_send_json_error('Settings model not available');
+            return;
+        }
+        
+        $settings_model = new YRR_Settings_Model();
+        $slots = $settings_model->get_time_slot_preview($duration);
+        
+        wp_send_json_success($slots);
     }
     
     public function run() {
@@ -375,23 +402,10 @@ class YRR_Plugin {
     }
 }
 
-
-
-
-
-
-function yrr_init_plugin() {
-    $yrr_plugin = new YRR_Plugin();
-    $yrr_plugin->run();
 }
-
-add_action('plugins_loaded', 'yrr_init_plugin');
-
-
 
 /**
  * Enhanced Email Function with Discount Support
- * Add this before the closing ?> tag in wp-restaurant-reservation.php
  */
 function yrr_send_reservation_email_with_discount($reservation_data, $coupon_data = null) {
     // Get restaurant settings
@@ -408,10 +422,10 @@ function yrr_send_reservation_email_with_discount($reservation_data, $coupon_dat
         'From: ' . $restaurant_name . ' <' . $restaurant_email . '>'
     );
     
-    // **CUSTOMER EMAIL** - Reservation confirmation with discount details
+    // Customer email subject
     $customer_subject = '🎉 Reservation Confirmed - ' . $restaurant_name;
     
-    // Start building HTML email for customer
+    // Build customer email
     $customer_message = '
     <html>
     <head>
@@ -475,24 +489,7 @@ function yrr_send_reservation_email_with_discount($reservation_data, $coupon_dat
                 </div>';
     }
     
-    // Add restaurant contact information
     $customer_message .= '
-                <div class="info-box">
-                    <h3>📞 Contact Information</h3>';
-    
-    if ($restaurant_phone) {
-        $customer_message .= '<p><strong>Phone:</strong> ' . esc_html($restaurant_phone) . '</p>';
-    }
-    
-    if ($restaurant_address) {
-        $customer_message .= '<p><strong>Address:</strong> ' . esc_html($restaurant_address) . '</p>';
-    }
-    
-    $customer_message .= '<p><strong>Email:</strong> ' . esc_html($restaurant_email) . '</p>
-                </div>
-                
-                <p>We look forward to serving you! If you need to make any changes to your reservation, please contact us as soon as possible.</p>
-                
                 <div class="footer">
                     <p>Best regards,<br><strong>' . esc_html($restaurant_name) . '</strong></p>
                     <p><small>This is an automated confirmation email. Please save it for your records.</small></p>
@@ -502,76 +499,9 @@ function yrr_send_reservation_email_with_discount($reservation_data, $coupon_dat
     </body>
     </html>';
     
-    // **ADMIN EMAIL** - New reservation notification
-    $admin_subject = '🆕 New Reservation' . ($coupon_data ? ' with Discount' : '') . ' - ' . $reservation_data['reservation_code'];
-    
-    $admin_message = '
-    <html>
-    <head>
-        <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 5px; }
-            .info { background: #f8f9fa; padding: 20px; margin: 15px 0; border-radius: 5px; }
-            .discount { background: #fff3cd; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #ffc107; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h2>New Reservation Received</h2>
-            </div>
-            
-            <div class="info">
-                <h3>Customer Information</h3>
-                <p><strong>Name:</strong> ' . esc_html($reservation_data['customer_name']) . '</p>
-                <p><strong>Email:</strong> ' . esc_html($reservation_data['customer_email']) . '</p>
-                <p><strong>Phone:</strong> ' . esc_html($reservation_data['customer_phone']) . '</p>
-            </div>
-            
-            <div class="info">
-                <h3>Reservation Details</h3>
-                <p><strong>Code:</strong> ' . esc_html($reservation_data['reservation_code']) . '</p>
-                <p><strong>Date:</strong> ' . date('F j, Y', strtotime($reservation_data['reservation_date'])) . '</p>
-                <p><strong>Time:</strong> ' . date('g:i A', strtotime($reservation_data['reservation_time'])) . '</p>
-                <p><strong>Party Size:</strong> ' . intval($reservation_data['party_size']) . ' guests</p>';
-    
-    if (!empty($reservation_data['special_requests'])) {
-        $admin_message .= '<p><strong>Special Requests:</strong> ' . esc_html($reservation_data['special_requests']) . '</p>';
-    }
-    
-    $admin_message .= '</div>';
-    
-    // Add discount information for admin
-    if ($coupon_data && isset($reservation_data['discount_amount']) && $reservation_data['discount_amount'] > 0) {
-        $admin_message .= '
-            <div class="discount">
-                <h3>💰 Discount Coupon Used</h3>
-                <p><strong>Coupon Code:</strong> ' . esc_html($coupon_data['coupon_code']) . '</p>
-                <p><strong>Coupon Name:</strong> ' . esc_html($coupon_data['coupon_name']) . '</p>
-                <p><strong>Discount Applied:</strong> ' . $currency_symbol . number_format($reservation_data['discount_amount'], 2) . '</p>
-                <p><strong>Final Amount:</strong> ' . $currency_symbol . number_format($reservation_data['final_price'], 2) . '</p>
-            </div>';
-    }
-    
-    $admin_message .= '
-            <p><strong>Action Required:</strong> Please review and confirm this reservation in your admin dashboard.</p>
-        </div>
-    </body>
-    </html>';
-    
     // Send emails
     $customer_sent = wp_mail($reservation_data['customer_email'], $customer_subject, $customer_message, $headers);
-    $admin_sent = wp_mail($restaurant_email, $admin_subject, $admin_message, $headers);
-    
-    // Log email results for debugging
-    if (!$customer_sent) {
-        error_log('YRR: Failed to send customer confirmation email to ' . $reservation_data['customer_email']);
-    }
-    
-    if (!$admin_sent) {
-        error_log('YRR: Failed to send admin notification email to ' . $restaurant_email);
-    }
+    $admin_sent = wp_mail($restaurant_email, 'New Reservation - ' . $reservation_data['reservation_code'], $customer_message, $headers);
     
     return array(
         'customer_sent' => $customer_sent,
@@ -605,7 +535,9 @@ function yrr_send_coupon_notification($coupon_data) {
     return wp_mail($restaurant_email, $subject, $message);
 }
 
-// Add this to wp-restaurant-reservation.php for debugging
+/**
+ * Debug functions for troubleshooting
+ */
 function yrr_debug_manual_reservation() {
     if (!current_user_can('manage_options') || !isset($_GET['test_manual'])) {
         return;
@@ -613,7 +545,6 @@ function yrr_debug_manual_reservation() {
     
     global $wpdb;
     
-    // Test database connection
     echo '<div style="background: white; padding: 20px; margin: 20px; border: 2px solid #007cba;">';
     echo '<h3>🔍 Manual Reservation Debug Test</h3>';
     
@@ -653,8 +584,12 @@ function yrr_debug_manual_reservation() {
         echo '<p>❌ YRR_Reservation_Model class NOT found</p>';
     }
     
-///////////////////////////////
-// Add to wp-restaurant-reservation.php for debugging
+    echo '</div>';
+}
+
+/**
+ * Detailed debug function
+ */
 function yrr_debug_manual_reservation_detailed() {
     if (!current_user_can('manage_options') || !isset($_GET['debug_manual'])) {
         return;
@@ -709,14 +644,14 @@ function yrr_debug_manual_reservation_detailed() {
     
     echo '</div>';
 }
-add_action('admin_notices', 'yrr_debug_manual_reservation_detailed');
 
-    // Add this function to your main plugin file
+/**
+ * Create reservations table function
+ */
 function yrr_create_reservations_table() {
     global $wpdb;
     
     $table_name = $wpdb->prefix . 'yrr_reservations';
-    
     $charset_collate = $wpdb->get_charset_collate();
 
     $sql = "CREATE TABLE IF NOT EXISTS $table_name (
@@ -747,24 +682,57 @@ function yrr_create_reservations_table() {
     dbDelta($sql);
 }
 
-// Hook it to plugin activation
-register_activation_hook(__FILE__, 'yrr_create_reservations_table');
-
-// Also run it on admin_init to ensure it exists
-add_action('admin_init', 'yrr_create_reservations_table');
-
-    // Check database table
-    $table_name = $wpdb->prefix . 'yrr_reservations';
-    $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") == $table_name;
-    echo '<p>Database table ' . $table_name . ': ' . ($table_exists ? '✅ EXISTS' : '❌ MISSING') . '</p>';
-    
-    if ($table_exists) {
-        $count = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
-        echo '<p>Total reservations in database: ' . $count . '</p>';
+// In your wp-restaurant-reservation.php file
+private function init_admin() {
+    if (!class_exists('YRR_Admin_Controller')) {
+        return;
     }
     
-    echo '</div>';
+    $admin_controller = new YRR_Admin_Controller();
+    add_action('admin_menu', array($admin_controller, 'add_admin_menu'));
+    add_action('admin_enqueue_scripts', array($admin_controller, 'enqueue_admin_assets'));
+    
+    // ✅ ENSURE THIS AJAX HANDLER EXISTS
+    add_action('wp_ajax_get_time_slot_preview', array($this, 'ajax_get_time_slot_preview'));
 }
-add_action('admin_notices', 'yrr_debug_manual_reservation');
 
-?>
+// ✅ ENSURE THIS METHOD EXISTS
+public function ajax_get_time_slot_preview() {
+    check_ajax_referer('yrr_ajax_nonce', 'nonce');
+    
+    $duration = intval($_POST['duration'] ?? 60);
+    
+    if (!class_exists('YRR_Settings_Model')) {
+        wp_send_json_error('Settings model not available');
+        return;
+    }
+    
+    $settings_model = new YRR_Settings_Model();
+    $slots = $settings_model->get_time_slot_preview($duration);
+    
+    wp_send_json_success($slots);
+}
+
+
+
+// Hook registrations
+add_action('admin_init', 'yrr_ensure_database_structure', 1);
+add_action('admin_notices', 'yrr_debug_manual_reservation');
+add_action('admin_notices', 'yrr_debug_manual_reservation_detailed');
+
+// Register autoloader
+spl_autoload_register('yrr_autoloader');
+
+// Hook plugin activation
+register_activation_hook(__FILE__, 'yrr_create_reservations_table');
+add_action('admin_init', 'yrr_create_reservations_table');
+
+/**
+ * Initialize plugin
+ */
+function yrr_init_plugin() {
+    $yrr_plugin = new YRR_Plugin();
+    $yrr_plugin->run();
+}
+
+add_action('plugins_loaded', 'yrr_init_plugin');
