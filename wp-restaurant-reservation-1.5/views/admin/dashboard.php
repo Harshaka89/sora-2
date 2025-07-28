@@ -11,9 +11,24 @@ $statistics = isset($statistics) ? $statistics : array('total' => 0, 'today' => 
 $today_reservations = isset($today_reservations) ? $today_reservations : array();
 $restaurant_status = isset($restaurant_status) ? $restaurant_status : '1';
 $restaurant_name = isset($restaurant_name) ? $restaurant_name : get_bloginfo('name');
+
+// Handle success messages
+$message = '';
+if (isset($_GET['message'])) {
+    switch ($_GET['message']) {
+        case 'reservation_created':
+            $message = '<div class="notice notice-success is-dismissible"><p>✅ Reservation created successfully!</p></div>';
+            break;
+        case 'error':
+            $message = '<div class="notice notice-error is-dismissible"><p>❌ Error creating reservation. Please try again.</p></div>';
+            break;
+    }
+}
 ?>
 
 <div class="wrap">
+    <?php echo $message; ?>
+    
     <div style="max-width: 1400px; margin: 20px auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
         
         <!-- Header -->
@@ -32,28 +47,28 @@ $restaurant_name = isset($restaurant_name) ? $restaurant_name : get_bloginfo('na
         <!-- Statistics Cards -->
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px;">
             
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 15px; text-align: center;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 15px; text-align: center; box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);">
                 <div style="font-size: 2.5rem; font-weight: bold; margin-bottom: 10px;">
                     <?php echo intval($statistics['total'] ?? 0); ?>
                 </div>
                 <div style="font-size: 1.1rem; opacity: 0.9;">📋 Total Reservations</div>
             </div>
             
-            <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 25px; border-radius: 15px; text-align: center;">
+            <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 25px; border-radius: 15px; text-align: center; box-shadow: 0 5px 15px rgba(240, 147, 251, 0.4);">
                 <div style="font-size: 2.5rem; font-weight: bold; margin-bottom: 10px;">
                     <?php echo intval($statistics['today'] ?? 0); ?>
                 </div>
                 <div style="font-size: 1.1rem; opacity: 0.9;">📅 Today's Bookings</div>
             </div>
             
-            <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 25px; border-radius: 15px; text-align: center;">
+            <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 25px; border-radius: 15px; text-align: center; box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);">
                 <div style="font-size: 2.5rem; font-weight: bold; margin-bottom: 10px;">
                     <?php echo intval($statistics['pending'] ?? 0); ?>
                 </div>
                 <div style="font-size: 1.1rem; opacity: 0.9;">⏳ Pending Approval</div>
             </div>
             
-            <div style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 25px; border-radius: 15px; text-align: center;">
+            <div style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 25px; border-radius: 15px; text-align: center; box-shadow: 0 5px 15px rgba(67, 233, 123, 0.4);">
                 <div style="font-size: 2.5rem; font-weight: bold; margin-bottom: 10px;">
                     <?php echo intval($statistics['confirmed'] ?? 0); ?>
                 </div>
