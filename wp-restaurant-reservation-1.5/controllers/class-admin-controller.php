@@ -232,24 +232,81 @@ private function handle_reservation_actions() {
         exit;
     }
     
-    public function all_reservations_page() {
-        $this->check_permissions('yrr_manage_reservations');
-        
-        $search = isset($_GET['search']) ? sanitize_text_field($_GET['search']) : '';
-        $status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '';
-        $date_from = isset($_GET['date_from']) ? sanitize_text_field($_GET['date_from']) : '';
-        $date_to = isset($_GET['date_to']) ? sanitize_text_field($_GET['date_to']) : '';
-        
-        $reservations = $this->reservation_model->get_filtered_reservations($search, $status_filter, $date_from, $date_to);
-        
-        $this->load_view('admin/all-reservations', array(
-            'reservations' => $reservations,
-            'search' => $search,
-            'status_filter' => $status_filter,
-            'date_from' => $date_from,
-            'date_to' => $date_to
-        ));
+  public function all_reservations_page() {
+    $this->check_permissions('yrr_manage_reservations');
+    
+    // Handle reservation actions first
+    if (isset($_GET['action']) && isset($_GET['id'])) {
+        $this->handle_reservation_actions();
     }
+    
+    // ✅ PAGINATION PARAMETERS
+    $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
+    $per_page = 15; // Reservations per page
+    $offset = ($current_page - 1) * $per_page;
+    
+    // ✅ FILTER PARAMETERS
+    $search = isset($_GET['search']) ? sanitize_text_field($_GET['search']) : '';
+    $status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '';
+    $date_filter = isset($_GET['date']) ? sanitize_text_field($_GET['date']) : '';
+    
+    // ✅ GET PAGINATED DATA FROM MODEL
+    if (!$this->reservation_model) {
+        $this->reservation_model = new YRR_Reservation_Model();
+    }
+    
+    $reservations_data = $this->reservation_model->get_paginated_reservations($offset, $per_page, array(
+        'search' => $search,
+        'status' => $status_filter,
+        'date' => $date_filter
+    ));
+    
+    // ✅ CALCULATE PAGINATION INFO
+    $total_reservations = $reservations_data['total'];
+    $total_pages = ceil($total_reservations / $per_page);
+    
+    // ✅ PASS ALL DATA TO VIEW
+    $this->load_view('admin/all-reservations', array(
+        'reservations' => $reservations_data['reservations'],
+        'total_reservations' => $total_reservations,
+        'current_page' => $current_page,
+        'per_page' => $per_page,
+        'total_pages' => $total_pages,
+        'search' => $search,
+        'status_filter' => $status_filter,
+        'date_filter' => $date_filter,
+        'showing_from' => ($offset + 1),
+        'showing_to' => min($offset + $per_page, $total_reservations)
+    ));
+}
+
+private function handle_reservation_actions() {
+    $action = sanitize_text_field($_GET['action']);
+    $id = intval($_GET['id']);
+    
+    if (!wp_verify_nonce($_GET['_wpnonce'], $action . '_reservation')) {
+        wp_die('Security check failed');
+    }
+    
+    switch ($action) {
+        case 'confirm':
+            $result = $this->reservation_model->update_status($id, 'confirmed');
+            $message = $result ? 'confirmed' : 'error';
+            break;
+        case 'cancel':
+            $result = $this->reservation_model->update_status($id, 'cancelled');
+            $message = $result ? 'cancelled' : 'error';
+            break;
+        case 'delete':
+            $result = $this->reservation_model->delete($id);
+            $message = $result ? 'deleted' : 'error';
+            break;
+    }
+    
+    wp_redirect(add_query_arg('message', $message, admin_url('admin.php?page=yrr-all-reservations')));
+    exit;
+}
+
     
     public function weekly_reservations_page() {
         $this->check_permissions('yrr_manage_reservations');

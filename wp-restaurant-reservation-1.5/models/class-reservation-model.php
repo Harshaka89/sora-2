@@ -130,6 +130,75 @@ class YRR_Reservation_Model {
         );
     }
     
+    public function get_paginated_reservations($offset = 0, $limit = 15, $filters = array()) {
+    $where_conditions = array('1=1');
+    $where_values = array();
+    
+    // ✅ SEARCH FILTER
+    if (!empty($filters['search'])) {
+        $where_conditions[] = "(customer_name LIKE %s OR customer_email LIKE %s OR reservation_code LIKE %s OR customer_phone LIKE %s)";
+        $search_term = '%' . $filters['search'] . '%';
+        $where_values = array_merge($where_values, array($search_term, $search_term, $search_term, $search_term));
+    }
+    
+    // ✅ STATUS FILTER
+    if (!empty($filters['status'])) {
+        $where_conditions[] = "status = %s";
+        $where_values[] = $filters['status'];
+    }
+    
+    // ✅ DATE FILTER
+    if (!empty($filters['date'])) {
+        $where_conditions[] = "reservation_date = %s";
+        $where_values[] = $filters['date'];
+    }
+    
+    $where_clause = implode(' AND ', $where_conditions);
+    
+    // ✅ GET TOTAL COUNT
+    $count_query = "SELECT COUNT(*) FROM {$this->table_name} WHERE {$where_clause}";
+    if (!empty($where_values)) {
+        $count_query = $this->wpdb->prepare($count_query, $where_values);
+    }
+    $total = intval($this->wpdb->get_var($count_query));
+    
+    // ✅ GET PAGINATED RESULTS
+    $query = "SELECT * FROM {$this->table_name} WHERE {$where_clause} ORDER BY created_at DESC, reservation_date DESC LIMIT %d OFFSET %d";
+    $query_values = array_merge($where_values, array($limit, $offset));
+    
+    if (!empty($query_values)) {
+        $prepared_query = $this->wpdb->prepare($query, $query_values);
+    } else {
+        $prepared_query = $query;
+    }
+    
+    $reservations = $this->wpdb->get_results($prepared_query);
+    
+    return array(
+        'reservations' => $reservations ?: array(),
+        'total' => $total
+    );
+}
+
+public function update_status($id, $status) {
+    $allowed_statuses = array('pending', 'confirmed', 'cancelled');
+    
+    if (!in_array($status, $allowed_statuses)) {
+        return false;
+    }
+    
+    return $this->wpdb->update(
+        $this->table_name,
+        array(
+            'status' => $status,
+            'updated_at' => current_time('mysql')
+        ),
+        array('id' => $id),
+        array('%s', '%s'),
+        array('%d')
+    ) !== false;
+}
+
     public function get_filtered_reservations($search = '', $status = '', $date_from = '', $date_to = '') {
         $where_conditions = array();
         $params = array();
