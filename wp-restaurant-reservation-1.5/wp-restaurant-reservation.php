@@ -1,4 +1,5 @@
 <?php
+<?php
 /**
  * Plugin Name: Yenolx Restaurant Reservation System
  * Plugin URI: https://yenolx.com
@@ -10,6 +11,411 @@
  * Requires PHP: 7.4
  * License: GPL v2 or later
  */
+
+if (!defined('ABSPATH')) exit;
+
+// Prevent duplicate loading
+if (defined('YRR_VERSION')) {
+    return;
+}
+
+// Define plugin constants
+define('YRR_VERSION', '1.5.1');
+define('YRR_PLUGIN_PATH', plugin_dir_path(__FILE__));
+define('YRR_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('YRR_PLUGIN_FILE', __FILE__);
+
+/**
+ * ✅ FORCE DATABASE SETUP ON EVERY ADMIN LOAD
+ */
+function yrr_force_database_setup() {
+    if (!is_admin()) return;
+    
+    global $wpdb;
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    $charset_collate = $wpdb->get_charset_collate();
+    
+    // Force create all tables
+    $tables = array(
+        'yrr_settings' => "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}yrr_settings (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            setting_name varchar(100) NOT NULL,
+            setting_value longtext DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY setting_name (setting_name)
+        ) $charset_collate",
+        
+        'yrr_reservations' => "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}yrr_reservations (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            reservation_code varchar(20) NOT NULL DEFAULT '',
+            customer_name varchar(100) NOT NULL DEFAULT '',
+            customer_email varchar(100) NOT NULL DEFAULT '',
+            customer_phone varchar(20) NOT NULL DEFAULT '',
+            party_size int(11) NOT NULL DEFAULT 1,
+            reservation_date date NOT NULL,
+            reservation_time time NOT NULL,
+            special_requests text DEFAULT NULL,
+            status varchar(20) NOT NULL DEFAULT 'pending',
+            table_id int(11) DEFAULT NULL,
+            notes text DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY reservation_code (reservation_code)
+        ) $charset_collate"
+    );
+    
+    foreach ($tables as $table => $sql) {
+        $wpdb->query($sql);
+    }
+    
+    // Insert default settings
+    $default_settings = array(
+        'restaurant_open' => '1',
+        'restaurant_name' => get_bloginfo('name'),
+        'restaurant_email' => get_option('admin_email'),
+        'max_party_size' => '12'
+    );
+    
+    foreach ($default_settings as $name => $value) {
+        $existing = $wpdb->get_var($wpdb->prepare(
+            "SELECT setting_value FROM {$wpdb->prefix}yrr_settings WHERE setting_name = %s",
+            $name
+        ));
+        
+        if ($existing === null) {
+            $wpdb->insert($wpdb->prefix . 'yrr_settings', array(
+                'setting_name' => $name,
+                'setting_value' => $value
+            ));
+        }
+    }
+}
+
+/**
+ * ✅ SAFE FILE LOADER WITH ERROR LOGGING
+ */
+function yrr_load_file($file_path) {
+    $full_path = YRR_PLUGIN_PATH . $file_path;
+    
+    if (file_exists($full_path)) {
+        require_once $full_path;
+        error_log("YRR: Successfully loaded - {$file_path}");
+        return true;
+    } else {
+        error_log("YRR: MISSING FILE - {$file_path} at {$full_path}");
+        return false;
+    }
+}
+
+/**
+ * ✅ MAIN PLUGIN CLASS - BULLETPROOF VERSION
+ */
+if (!class_exists('YenolxRestaurantReservation')) {
+
+class YenolxRestaurantReservation {
+    
+    private static $instance = null;
+    private $admin_controller = null;
+    
+    public function __construct() {
+        register_activation_hook(__FILE__, array($this, 'activate'));
+        register_deactivation_hook(__FILE__, array($this, 'deactivate'));
+        
+        // Hook into WordPress initialization
+        add_action('init', array($this, 'init'), 1);
+        add_action('admin_init', array($this, 'admin_init'), 1);
+        add_action('admin_menu', array($this, 'force_admin_menu'), 5);
+        add_action('wp_loaded', array($this, 'ensure_everything_loaded'));
+    }
+    
+    public static function get_instance() {
+        if (null === self::$instance) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+    
+    public function init() {
+        // Force database setup
+        yrr_force_database_setup();
+        
+        // Load all dependencies
+        $this->load_all_dependencies();
+        
+        error_log('YRR: Plugin initialized successfully');
+    }
+    
+    public function admin_init() {
+        // Force load admin components
+        $this->force_load_admin();
+        
+        error_log('YRR: Admin initialized');
+    }
+    
+    /**
+     * ✅ FORCE LOAD ALL DEPENDENCIES
+     */
+    private function load_all_dependencies() {
+        // Load models first
+        $models = array(
+            'models/class-settings-model.php',
+            'models/class-reservation-model.php',
+            'models/class-tables-model.php',
+            'models/class-hours-model.php'
+        );
+        
+        foreach ($models as $model) {
+            if (!yrr_load_file($model)) {
+                error_log("YRR: CRITICAL - Failed to load model: {$model}");
+            }
+        }
+        
+        // Load controllers
+        if (!yrr_load_file('controllers/class-admin-controller.php')) {
+            error_log("YRR: CRITICAL - Failed to load admin controller");
+        }
+    }
+    
+    /**
+     * ✅ FORCE ADMIN LOADING
+     */
+    private function force_load_admin() {
+        if (!is_admin()) return;
+        
+        try {
+            if (class_exists('YRR_Admin_Controller')) {
+                $this->admin_controller = new YRR_Admin_Controller();
+                error_log('YRR: Admin controller instantiated successfully');
+            } else {
+                error_log('YRR: CRITICAL - YRR_Admin_Controller class not found');
+            }
+        } catch (Exception $e) {
+            error_log('YRR: CRITICAL - Error instantiating admin controller: ' . $e->getMessage());
+        }
+    }
+    
+    /**
+     * ✅ FORCE ADMIN MENU CREATION
+     */
+    public function force_admin_menu() {
+        if (!current_user_can('manage_options')) return;
+        
+        // Force create menu even if controller fails
+        add_menu_page(
+            'Yenolx Reservations',
+            'Reservations',
+            'manage_options',
+            'yenolx-reservations',
+            array($this, 'fallback_dashboard'),
+            'dashicons-calendar-alt',
+            26
+        );
+        
+        add_submenu_page(
+            'yenolx-reservations',
+            'All Reservations',
+            'All Reservations',
+            'manage_options',
+            'yrr-all-reservations',
+            array($this, 'fallback_all_reservations')
+        );
+        
+        error_log('YRR: Admin menu created (fallback mode)');
+    }
+    
+    /**
+     * ✅ FALLBACK DASHBOARD (ALWAYS WORKS)
+     */
+    public function fallback_dashboard() {
+        echo '<div class="wrap">';
+        echo '<h1>🍽️ Yenolx Restaurant Dashboard</h1>';
+        
+        // Try to load proper dashboard
+        if ($this->admin_controller && method_exists($this->admin_controller, 'dashboard_page')) {
+            try {
+                $this->admin_controller->dashboard_page();
+                return;
+            } catch (Exception $e) {
+                error_log('YRR: Dashboard error: ' . $e->getMessage());
+            }
+        }
+        
+        // Fallback dashboard content
+        $this->show_emergency_dashboard();
+        echo '</div>';
+    }
+    
+    /**
+     * ✅ EMERGENCY DASHBOARD DISPLAY
+     */
+    private function show_emergency_dashboard() {
+        global $wpdb;
+        
+        echo '<div style="background: white; padding: 30px; border-radius: 10px; margin: 20px 0;">';
+        echo '<h2 style="color: #dc3545;">⚠️ Emergency Dashboard Mode</h2>';
+        echo '<p>The main dashboard controller failed to load. Using emergency mode.</p>';
+        
+        // Show basic stats
+        $reservations_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}yrr_reservations WHERE 1=1");
+        $today_count = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}yrr_reservations WHERE reservation_date = %s",
+            date('Y-m-d')
+        ));
+        
+        echo '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0;">';
+        echo '<div style="background: #007cba; color: white; padding: 20px; border-radius: 10px; text-align: center;">';
+        echo '<h3>Total Reservations</h3>';
+        echo '<div style="font-size: 2rem; font-weight: bold;">' . intval($reservations_count) . '</div>';
+        echo '</div>';
+        echo '<div style="background: #28a745; color: white; padding: 20px; border-radius: 10px; text-align: center;">';
+        echo '<h3>Today\'s Reservations</h3>';
+        echo '<div style="font-size: 2rem; font-weight: bold;">' . intval($today_count) . '</div>';
+        echo '</div>';
+        echo '</div>';
+        
+        // Debug information
+        echo '<div style="background: #fff3cd; padding: 20px; border-radius: 10px; margin: 20px 0;">';
+        echo '<h3>🔧 System Debug Information</h3>';
+        echo '<ul>';
+        echo '<li><strong>Plugin Path:</strong> ' . YRR_PLUGIN_PATH . '</li>';
+        echo '<li><strong>Admin Controller Loaded:</strong> ' . (class_exists('YRR_Admin_Controller') ? 'YES' : 'NO') . '</li>';
+        echo '<li><strong>Models Available:</strong> ' . (class_exists('YRR_Reservation_Model') ? 'YES' : 'NO') . '</li>';
+        echo '<li><strong>Database Tables:</strong> ' . ($wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}yrr_reservations'") ? 'EXISTS' : 'MISSING') . '</li>';
+        echo '<li><strong>WordPress Version:</strong> ' . get_bloginfo('version') . '</li>';
+        echo '<li><strong>PHP Version:</strong> ' . phpversion() . '</li>';
+        echo '</ul>';
+        echo '</div>';
+        
+        echo '</div>';
+    }
+    
+    /**
+     * ✅ FALLBACK ALL RESERVATIONS
+     */
+    public function fallback_all_reservations() {
+        echo '<div class="wrap">';
+        echo '<h1>📋 All Reservations</h1>';
+        
+        // Try to load proper page
+        if ($this->admin_controller && method_exists($this->admin_controller, 'all_reservations_page')) {
+            try {
+                $this->admin_controller->all_reservations_page();
+                return;
+            } catch (Exception $e) {
+                error_log('YRR: All reservations error: ' . $e->getMessage());
+            }
+        }
+        
+        // Fallback content
+        global $wpdb;
+        $reservations = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}yrr_reservations ORDER BY created_at DESC LIMIT 20");
+        
+        if (!empty($reservations)) {
+            echo '<table class="wp-list-table widefat fixed striped">';
+            echo '<thead><tr><th>Customer</th><th>Date</th><th>Time</th><th>Party</th><th>Status</th></tr></thead>';
+            echo '<tbody>';
+            foreach ($reservations as $reservation) {
+                echo '<tr>';
+                echo '<td>' . esc_html($reservation->customer_name) . '</td>';
+                echo '<td>' . esc_html($reservation->reservation_date) . '</td>';
+                echo '<td>' . esc_html($reservation->reservation_time) . '</td>';
+                echo '<td>' . esc_html($reservation->party_size) . '</td>';
+                echo '<td>' . esc_html($reservation->status) . '</td>';
+                echo '</tr>';
+            }
+            echo '</tbody></table>';
+        } else {
+            echo '<p>No reservations found.</p>';
+        }
+        
+        echo '</div>';
+    }
+    
+    /**
+     * ✅ ENSURE EVERYTHING IS LOADED
+     */
+    public function ensure_everything_loaded() {
+        if (is_admin()) {
+            // Double-check everything is working
+            if (!class_exists('YRR_Admin_Controller')) {
+                error_log('YRR: CRITICAL - Admin controller still not loaded after wp_loaded');
+                $this->emergency_load_controller();
+            }
+        }
+    }
+    
+    /**
+     * ✅ EMERGENCY CONTROLLER LOADER
+     */
+    private function emergency_load_controller() {
+        $controller_path = YRR_PLUGIN_PATH . 'controllers/class-admin-controller.php';
+        
+        if (file_exists($controller_path)) {
+            include_once $controller_path;
+            error_log('YRR: Emergency loaded admin controller');
+        } else {
+            error_log('YRR: CRITICAL - Admin controller file missing at: ' . $controller_path);
+        }
+    }
+    
+    public function activate() {
+        yrr_force_database_setup();
+        flush_rewrite_rules();
+        error_log('YRR: Plugin activated');
+    }
+    
+    public function deactivate() {
+        flush_rewrite_rules();
+        error_log('YRR: Plugin deactivated');
+    }
+}
+
+} // End class check
+
+/**
+ * ✅ INITIALIZE PLUGIN - MULTIPLE ATTEMPTS
+ */
+function yrr_init_plugin() {
+    try {
+        $yrr_plugin = YenolxRestaurantReservation::get_instance();
+        error_log('YRR: Plugin instance created successfully');
+    } catch (Exception $e) {
+        error_log('YRR: CRITICAL - Failed to initialize plugin: ' . $e->getMessage());
+    }
+}
+
+// Hook plugin initialization to multiple WordPress events
+add_action('plugins_loaded', 'yrr_init_plugin', 1);
+add_action('init', 'yrr_init_plugin', 1);
+add_action('admin_init', 'yrr_init_plugin', 1);
+
+/**
+ * ✅ FORCE ACTIVATION SEQUENCE
+ */
+register_activation_hook(__FILE__, function() {
+    yrr_force_database_setup();
+    yrr_init_plugin();
+    error_log('YRR: Activation hook completed');
+});
+
+// ✅ EMERGENCY DEBUG FUNCTION
+function yrr_emergency_debug() {
+    if (!current_user_can('manage_options') || !isset($_GET['yrr_debug'])) return;
+    
+    echo '<div style="background: red; color: white; padding: 20px; margin: 20px; position: fixed; top: 32px; right: 20px; z-index: 9999; border-radius: 10px; max-width: 400px;">';
+    echo '<h3>🚨 YRR Emergency Debug</h3>';
+    echo '<p><strong>Plugin Path:</strong> ' . (defined('YRR_PLUGIN_PATH') ? YRR_PLUGIN_PATH : 'UNDEFINED') . '</p>';
+    echo '<p><strong>Admin Controller:</strong> ' . (class_exists('YRR_Admin_Controller') ? 'LOADED' : 'MISSING') . '</p>';
+    echo '<p><strong>Current User Can:</strong> ' . (current_user_can('manage_options') ? 'YES' : 'NO') . '</p>';
+    echo '<p><strong>Is Admin:</strong> ' . (is_admin() ? 'YES' : 'NO') . '</p>';
+    echo '<p><strong>WordPress Version:</strong> ' . get_bloginfo('version') . '</p>';
+    echo '</div>';
+}
+add_action('admin_notices', 'yrr_emergency_debug');
+
 
 if (!defined('ABSPATH')) exit;
 
