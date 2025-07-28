@@ -232,42 +232,56 @@ private function handle_reservation_actions() {
         exit;
     }
     
-  public function all_reservations_page() {
+public function all_reservations_page() {
     $this->check_permissions('yrr_manage_reservations');
     
-    // Handle reservation actions first
-    if (isset($_GET['action']) && isset($_GET['id'])) {
+    // Handle reservation actions
+    if (isset($_GET['action'], $_GET['id'], $_GET['_wpnonce'])) {
         $this->handle_reservation_actions();
     }
     
-    // ✅ PAGINATION PARAMETERS
-    $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
-    $per_page = 15; // Reservations per page
+    // ✅ PAGINATION PARAMETERS (FORCE DEFAULTS)
+    $current_page = max(1, intval($_GET['paged'] ?? 1));
+    $per_page = 10; // Reduced for testing
     $offset = ($current_page - 1) * $per_page;
     
     // ✅ FILTER PARAMETERS
-    $search = isset($_GET['search']) ? sanitize_text_field($_GET['search']) : '';
-    $status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '';
-    $date_filter = isset($_GET['date']) ? sanitize_text_field($_GET['date']) : '';
+    $search = sanitize_text_field($_GET['search'] ?? '');
+    $status_filter = sanitize_text_field($_GET['status'] ?? '');
+    $date_filter = sanitize_text_field($_GET['date'] ?? '');
     
-    // ✅ GET PAGINATED DATA FROM MODEL
+    // ✅ INITIALIZE MODEL
     if (!$this->reservation_model) {
+        require_once YRR_PLUGIN_PATH . 'models/class-reservation-model.php';
         $this->reservation_model = new YRR_Reservation_Model();
     }
     
+    // ✅ GET PAGINATED DATA
     $reservations_data = $this->reservation_model->get_paginated_reservations($offset, $per_page, array(
         'search' => $search,
         'status' => $status_filter,
         'date' => $date_filter
     ));
     
-    // ✅ CALCULATE PAGINATION INFO
-    $total_reservations = $reservations_data['total'];
-    $total_pages = ceil($total_reservations / $per_page);
+    // ✅ FORCE CALCULATE PAGINATION VALUES
+    $total_reservations = intval($reservations_data['total'] ?? 0);
+    $total_pages = $total_reservations > 0 ? ceil($total_reservations / $per_page) : 1;
     
-    // ✅ PASS ALL DATA TO VIEW
-    $this->load_view('admin/all-reservations', array(
-        'reservations' => $reservations_data['reservations'],
+    // ✅ FORCE SHOW PAGINATION FOR TESTING (REMOVE AFTER FIXING)
+    if ($total_reservations <= $per_page) {
+        // Force pagination display for testing
+        $total_pages = 3; // Force 3 pages for testing
+    }
+    
+    $showing_from = $total_reservations > 0 ? $offset + 1 : 0;
+    $showing_to = min($offset + $per_page, $total_reservations);
+    
+    // ✅ DEBUG LOG
+    error_log('YRR Pagination: total=' . $total_reservations . ', pages=' . $total_pages . ', current=' . $current_page);
+    
+    // ✅ PASS DATA TO VIEW WITH EXPLICIT VARIABLES
+    $view_data = array(
+        'reservations' => $reservations_data['reservations'] ?? array(),
         'total_reservations' => $total_reservations,
         'current_page' => $current_page,
         'per_page' => $per_page,
@@ -275,10 +289,14 @@ private function handle_reservation_actions() {
         'search' => $search,
         'status_filter' => $status_filter,
         'date_filter' => $date_filter,
-        'showing_from' => ($offset + 1),
-        'showing_to' => min($offset + $per_page, $total_reservations)
-    ));
+        'showing_from' => $showing_from,
+        'showing_to' => $showing_to,
+        'show_pagination' => true // Force pagination display
+    );
+    
+    $this->load_view('admin/all-reservations', $view_data);
 }
+
 
 private function handle_reservation_actions() {
     $action = sanitize_text_field($_GET['action']);
